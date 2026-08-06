@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<title>PI Load Calculator</title>
+<script src="https://miro.com/app/static/sdk/v2/miro.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    padding: 16px;
+    color: #1a1a1a;
+    font-size: 13px;
+  }
+  h1 { font-size: 15px; margin: 0 0 4px 0; }
+  h2 { font-size: 13px; margin: 20px 0 8px 0; }
+  button {
+    background: #4262ff; color: #fff; border: none; border-radius: 6px;
+    padding: 8px 14px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { background: #2f4fe0; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
+  th { color: #666; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  td.num { text-align: right; }
+  .overloaded { color: #df0b0b; font-weight: 700; }
+  .ok { color: #00a656; font-weight: 700; }
+  .warn-low { color: #df0b0b; font-weight: 700; }
+  .status { color: #888; font-size: 12px; margin-top: 8px; }
+  .error { color: #df0b0b; font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<h1>PI Load Calculator</h1>
+
+<h2>Загрузка по итерациям</h2>
+<button id="loadBtn">Пересчитать Загрузку</button>
+<div id="loadStatus" class="status"></div>
+<table id="loadTable" style="display:none">
+  <thead><tr><th>Итерация</th><th class="num">Загрузка</th><th class="num">Ёмкость</th><th>Статус</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<h2>Аллокация ёмкости по категориям</h2>
+<button id="allocBtn">Пересчитать Аллокацию</button>
+<div id="allocStatus" class="status"></div>
+<table id="allocTable" style="display:none">
+  <thead><tr><th>Категория</th><th class="num">Сумма в SP</th><th class="num">% аллокации</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<script>
+const ALLOCATION_CATEGORIES = [
+  'Стратегический эпик',
+  'Эпики поезда (BAU)',
+  'Регуляторные требования',
+  'Инфраструктурные и архитектурные улучшения',
+  'Баги и техническая поддержка',
+  'Не указано',
+];
+const LOW_REGULATORY_THRESHOLD = 10; // %
+const REGULATORY_CATEGORY = 'Регуляторные требования';
+
+const FEATURE_COLOR = '#2d9bf0';
+const STORY_COLOR = '#8fd14f';
+
+function stripHtml(s) {
+  const div = document.createElement('div');
+  div.innerHTML = s || '';
+  return (div.textContent || div.innerText || '').trim();
+}
+
+function rowYRange(shapes, minH, maxH) {
+  const cells = shapes.filter(
+    (s) => stripHtml(s.content) === '' && s.height && s.height >= minH && s.height <= maxH
+  );
+  if (!cells.length) return null;
+  const yMin = Math.min(...cells.map((c) => c.y - c.height / 2));
+  const yMax = Math.max(...cells.map((c) => c.y + c.height / 2));
+  return [yMin, yMax];
+}
+
+// ---------- Load ----------
+
+async function recalcLoad() {
+  const statusEl = document.getElementById('loadStatus');
+  const tableEl = document.getElementById('loadTable');
+  statusEl.textContent = 'Считаю...';
+  statusEl.className = 'status';
+  try {
+    const shapes = await miro.board.get({ type: 'shape' });
+    const texts = await miro.board.get({ type: 'text' });
+    const stickies = await miro.board.get({ type: 'sticky_note' });
+    const all = [...shapes, ...texts, ...stickies].map((it) => ({
+      ref: it,
+      x: it.x,
+      y: it.y,
+      w: it.width,
+      h: it.height,
+      content: stripHtml(it.content),
+      type: it.type,
+    }));
+
+    const iterHeaders = all
+      .filter((it) => it.type === 'text' && it.content.startsWith('Итерация'))
+      .sort((a, b) => a.x - b.x);
+    if (!iterHeaders.length) throw new Error('Не найдены заголовки итераций на доске');
+
+    const centers = iterHeaders.map((it) => it.x);
+    const bounds = centers.map((c, i) => [
+      i === 0 ? -Infinity : (centers[i - 1] + c) / 2,
+      i === centers.length - 1 ? Infinity : (c + centers[i + 1]) / 2,
+    ]);
+
+    const labelY = (text) => {
+      const m = all.filter((it) => it.type === 'shape' && it.content === text).map((it) => it.y);
+      return m.length ? m.reduce((a, b) => a + b, 0) / m.length : null;
+    };
+    const capacityY = labelY('Емкость');
+    const loadY = labelY('Загрузка');
+    if (capacityY === null || loadY === null) throw new Error('Не найдены строки "Емкость"/"Загрузка" на доске');
+
+    const circles = all.filter((it) => it.type === 'shape' && it.w && it.w >= 100 && it.w <= 200);
+    const nearestCircle = (targetY, left, right) => {
+      const cands = circles.filter((c) => c.x >= left && c.x < right);
+      if (!cands.length) return null;
+      return cands.reduce((best, c) => (Math.abs(c.y - targetY) < Math.abs(best.y - targetY) ? c : best));
+    };
+
+    const storyRange = rowYRange(shapes, 1500, 3000);
+    if (!storyRange) throw new Error('Не найдена строка "Story" на доске');
+    const [storyYMin, storyYMax] = storyRange;
+
+    const markers = all.filter(
+      (it) =>
+        (it.type === 'text' || it.type === 'sticky_note') &&
+        it.y >= storyYMin &&
+        it.y <= storyYMax &&
+        /^\d+$/.test(it.content)
+    );
+
+    const results = [];
+    for (let i = 0; i < bounds.length; i++) {
+      const [left, right] = bounds[i];
+      const colMarkers = markers.filter((m) => m.x >= left && m.x < right);
+      const total = colMarkers.reduce((s, m) => s + parseInt(m.content, 10), 0);
+
+      const loadCircle = nearestCircle(loadY, left, right);
+      const capCircle = nearestCircle(capacityY, left, right);
+      let capValue = null;
+      if (capCircle && /^\d+$/.test(capCircle.content)) capValue = parseInt(capCircle.content, 10);
+      const overloaded = capValue !== null && total > capValue;
+      results.push({ label: iterHeaders[i].content, total, capValue, overloaded, loadCircle });
+    }
+
+    for (const r of results) {
+      if (!r.loadCircle) continue;
+      const shapeItem = r.loadCircle.ref;
+      shapeItem.content = `<p>${r.total}</p>`;
+      shapeItem.style.fillColor = r.overloaded ? '#df0b0b' : '#00a656';
+      await shapeItem.sync();
+    }
+
+    const tbody = tableEl.querySelector('tbody');
+    tbody.innerHTML = '';
+    for (const r of results) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.label}</td><td class="num">${r.total}</td><td class="num">${
+        r.capValue ?? '-'
+      }</td><td class="${r.overloaded ? 'overloaded' : 'ok'}">${r.overloaded ? 'ПЕРЕГРУЗ' : 'ok'}</td>`;
+      tbody.appendChild(tr);
+    }
+    tableEl.style.display = '';
+    statusEl.textContent = 'Готово. Доска обновлена.';
+  } catch (e) {
+    statusEl.textContent = 'Ошибка: ' + e.message;
+    statusEl.className = 'error';
+  }
+}
+
+// ---------- Allocation ----------
+
+const BRACKET_RE = /\[(.*?)\]/;
+
+async function recalcAllocation() {
+  const statusEl = document.getElementById('allocStatus');
+  const tableEl = document.getElementById('allocTable');
+  statusEl.textContent = 'Считаю...';
+  statusEl.className = 'status';
+  try {
+    const shapes = await miro.board.get({ type: 'shape' });
+    const featureRange = rowYRange(shapes, 700, 1200);
+    const storyRange = rowYRange(shapes, 1500, 3000);
+    if (!featureRange || !storyRange) throw new Error('Не найдены строки "Feature"/"Story" на доске');
+
+    const zone = (y) => {
+      if (y === null || y === undefined) return null;
+      if (y >= featureRange[0] && y <= featureRange[1]) return 'feature';
+      if (y >= storyRange[0] && y <= storyRange[1]) return 'story';
+      return null;
+    };
+    const colorZone = (color) => {
+      if (color === FEATURE_COLOR) return 'feature';
+      if (color === STORY_COLOR) return 'story';
+      return null;
+    };
+
+    const cards = await miro.board.get({ type: 'card' });
+
+    // Resolve every unique tag once, cache id -> numeric value (or null if non-numeric)
+    const tagValueCache = new Map();
+    async function numericTagValue(tagId) {
+      if (tagValueCache.has(tagId)) return tagValueCache.get(tagId);
+      let value = null;
+      try {
+        const tag = await miro.board.getById(tagId);
+        const title = (tag.title || '').trim();
+        if (/^\d+$/.test(title)) value = parseInt(title, 10);
+      } catch (e) {
+        value = null;
+      }
+      tagValueCache.set(tagId, value);
+      return value;
+    }
+
+    const pointsByCard = new Map();
+    for (const card of cards) {
+      let sum = 0;
+      for (const tagId of card.tagIds || []) {
+        const v = await numericTagValue(tagId);
+        if (v !== null) sum += v;
+      }
+      if (sum > 0) pointsByCard.set(card.id, sum);
+    }
+
+    const connectors = await miro.board.get({ type: 'connector' });
+    const cardById = new Map(cards.map((c) => [c.id, c]));
+
+    const featureToStories = new Map();
+    for (const conn of connectors) {
+      const startId = conn.start && conn.start.item;
+      const endId = conn.end && conn.end.item;
+      if (!startId || !endId) continue;
+      const startCard = cardById.get(startId);
+      const endCard = cardById.get(endId);
+
+      const startZone =
+        (startCard && colorZone(startCard.style && startCard.style.cardTheme)) || zone(startCard && startCard.y);
+      const endZone =
+        (endCard && colorZone(endCard.style && endCard.style.cardTheme)) || zone(endCard && endCard.y);
+
+      let featureId = null;
+      let storyId = null;
+      if (startZone === 'feature' && endZone === 'story') {
+        featureId = startId;
+        storyId = endId;
+      } else if (startZone === 'story' && endZone === 'feature') {
+        featureId = endId;
+        storyId = startId;
+      } else {
+        continue;
+      }
+      if (!featureToStories.has(featureId)) featureToStories.set(featureId, []);
+      featureToStories.get(featureId).push(storyId);
+    }
+
+    const categoryTotals = {};
+    for (const cat of ALLOCATION_CATEGORIES) categoryTotals[cat] = 0;
+
+    const linkedStoryIds = new Set();
+    for (const [featureId, storyIds] of featureToStories.entries()) {
+      storyIds.forEach((id) => linkedStoryIds.add(id));
+      const featureCard = cardById.get(featureId);
+      const title = stripHtml((featureCard && featureCard.title) || '');
+      const m = BRACKET_RE.exec(title);
+      let category = 'Не указано';
+      if (m) {
+        const bracketText = m[1].trim().toLowerCase();
+        const matched = ALLOCATION_CATEGORIES.find((c) => c.toLowerCase() === bracketText);
+        if (matched) category = matched;
+      }
+      const spSum = storyIds.reduce((s, id) => s + (pointsByCard.get(id) || 0), 0);
+      categoryTotals[category] += spSum;
+    }
+
+    // Stories with SP tags but no Feature link still count, under "Не указано"
+    for (const card of cards) {
+      if (linkedStoryIds.has(card.id)) continue;
+      const sp = pointsByCard.get(card.id);
+      if (!sp) continue;
+      const cardZone = colorZone(card.style && card.style.cardTheme) || zone(card.y);
+      if (cardZone === 'story') categoryTotals['Не указано'] += sp;
+    }
+
+    const total = Object.values(categoryTotals).reduce((a, b) => a + b, 0);
+    const results = ALLOCATION_CATEGORIES.map((cat) => {
+      const sp = categoryTotals[cat];
+      const pct = total > 0 ? Math.round((sp / total) * 100) : 0;
+      return { category: cat, sp, pct };
+    });
+
+    const tbody = tableEl.querySelector('tbody');
+    tbody.innerHTML = '';
+    for (const r of results) {
+      const lowRegulatory = r.category === REGULATORY_CATEGORY && r.pct < LOW_REGULATORY_THRESHOLD;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.category}</td><td class="num">${r.sp}</td><td class="num${
+        lowRegulatory ? ' warn-low' : ''
+      }">${r.pct}%</td>`;
+      tbody.appendChild(tr);
+    }
+    tableEl.style.display = '';
+    statusEl.textContent = 'Готово.';
+  } catch (e) {
+    statusEl.textContent = 'Ошибка: ' + e.message;
+    statusEl.className = 'error';
+  }
+}
+
+document.getElementById('loadBtn').addEventListener('click', recalcLoad);
+document.getElementById('allocBtn').addEventListener('click', recalcAllocation);
+</script>
+</body>
+</html>
