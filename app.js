@@ -46,7 +46,7 @@ async function recalc() {
   const capacityY = labelY('Емкость');
   const loadY = labelY('Загрузка');
   if (capacityY === null || loadY === null) {
-    await miro.board.notifications.showError('Не найдены строки "Ёмкость"/"Загрузка" на доске');
+    await miro.board.notifications.showError('Не найдены строки "Емкость"/"Загрузка" на доске');
     return;
   }
 
@@ -110,6 +110,4 @@ async function init() {
   });
 }
 
-miro.onReady(() => {
-  init();
-});
+init();
