@@ -67,8 +67,7 @@ async function recalcLoad() {
   try {
     const shapes = await miro.board.get({ type: 'shape' });
     const texts = await miro.board.get({ type: 'text' });
-    const stickies = await miro.board.get({ type: 'sticky_note' });
-    const all = [...shapes, ...texts, ...stickies].map((it) => ({
+    const all = [...shapes, ...texts].map((it) => ({
       ref: it,
       x: it.x,
       y: it.y,
@@ -108,19 +107,18 @@ async function recalcLoad() {
     if (!storyRange) throw new Error('Не найдена строка "Story" на доске');
     const [storyYMin, storyYMax] = storyRange;
 
-    const markers = all.filter(
-      (it) =>
-        (it.type === 'text' || it.type === 'sticky_note') &&
-        it.y >= storyYMin &&
-        it.y <= storyYMax &&
-        /^\d+$/.test(it.content)
-    );
+    // Story points come from numeric tags on cards (same source as the allocation calc)
+    const cards = await miro.board.get({ type: 'card' });
+    const pointsByCard = await getPointsByCard(cards);
+    const markers = cards
+      .filter((c) => pointsByCard.has(c.id) && c.y >= storyYMin && c.y <= storyYMax)
+      .map((c) => ({ x: c.x, value: pointsByCard.get(c.id) }));
 
     const results = [];
     for (let i = 0; i < bounds.length; i++) {
       const [left, right] = bounds[i];
       const colMarkers = markers.filter((m) => m.x >= left && m.x < right);
-      const total = colMarkers.reduce((s, m) => s + parseInt(m.content, 10), 0);
+      const total = colMarkers.reduce((s, m) => s + m.value, 0);
 
       const loadCircle = nearestCircle(loadY, left, right);
       const capCircle = nearestCircle(capacityY, left, right);
@@ -183,10 +181,10 @@ async function createPlaceholder(results) {
     height: 260,
     style: {
       fillColor: PLACEHOLDER_COLOR,
-      fillOpacity: '1.0',
+      fillOpacity: 1,
       textAlign: 'left',
       textAlignVertical: 'top',
-      fontSize: '14',
+      fontSize: 14,
     },
   });
 

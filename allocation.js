@@ -30,41 +30,24 @@ function rowYRange(shapes, minH, maxH) {
   return [yMin, yMax];
 }
 
-async function computeAllocation() {
-  const shapes = await miro.board.get({ type: 'shape' });
-  const featureRange = rowYRange(shapes, 700, 1200);
-  const storyRange = rowYRange(shapes, 1500, 3000);
-  if (!featureRange || !storyRange) throw new Error('Не найдены строки "Feature"/"Story" на доске');
-
-  const zone = (y) => {
-    if (y === null || y === undefined) return null;
-    if (y >= featureRange[0] && y <= featureRange[1]) return 'feature';
-    if (y >= storyRange[0] && y <= storyRange[1]) return 'story';
-    return null;
-  };
-  const colorZone = (color) => {
-    if (color === FEATURE_COLOR) return 'feature';
-    if (color === STORY_COLOR) return 'story';
-    return null;
-  };
-
-  const cards = await miro.board.get({ type: 'card' });
-
-  const tagValueCache = new Map();
-  async function numericTagValue(tagId) {
-    if (tagValueCache.has(tagId)) return tagValueCache.get(tagId);
-    let value = null;
-    try {
-      const tag = await miro.board.getById(tagId);
-      const title = (tag.title || '').trim();
-      if (/^\d+$/.test(title)) value = parseInt(title, 10);
-    } catch (e) {
-      value = null;
-    }
-    tagValueCache.set(tagId, value);
-    return value;
+const _tagValueCache = new Map();
+async function numericTagValue(tagId) {
+  if (_tagValueCache.has(tagId)) return _tagValueCache.get(tagId);
+  let value = null;
+  try {
+    const tag = await miro.board.getById(tagId);
+    const title = (tag.title || '').trim();
+    if (/^\d+$/.test(title)) value = parseInt(title, 10);
+  } catch (e) {
+    value = null;
   }
+  _tagValueCache.set(tagId, value);
+  return value;
+}
 
+// Story points come from numeric tags on cards (e.g. "1", "2", "3", "5", "8", "13"...).
+// A card with several numeric tags counts all of them.
+async function getPointsByCard(cards) {
   const pointsByCard = new Map();
   for (const card of cards) {
     let sum = 0;
@@ -74,6 +57,32 @@ async function computeAllocation() {
     }
     if (sum > 0) pointsByCard.set(card.id, sum);
   }
+  return pointsByCard;
+}
+
+function zoneOf(featureRange, storyRange, y) {
+  if (y === null || y === undefined) return null;
+  if (y >= featureRange[0] && y <= featureRange[1]) return 'feature';
+  if (y >= storyRange[0] && y <= storyRange[1]) return 'story';
+  return null;
+}
+
+function colorZone(color) {
+  if (color === FEATURE_COLOR) return 'feature';
+  if (color === STORY_COLOR) return 'story';
+  return null;
+}
+
+async function computeAllocation() {
+  const shapes = await miro.board.get({ type: 'shape' });
+  const featureRange = rowYRange(shapes, 700, 1200);
+  const storyRange = rowYRange(shapes, 1500, 3000);
+  if (!featureRange || !storyRange) throw new Error('Не найдены строки "Feature"/"Story" на доске');
+
+  const zone = (y) => zoneOf(featureRange, storyRange, y);
+
+  const cards = await miro.board.get({ type: 'card' });
+  const pointsByCard = await getPointsByCard(cards);
 
   const connectors = await miro.board.get({ type: 'connector' });
   const cardById = new Map(cards.map((c) => [c.id, c]));
