@@ -118,6 +118,12 @@ async function computeAllocation() {
   const categoryTotals = {};
   for (const cat of ALLOCATION_CATEGORIES) categoryTotals[cat] = 0;
 
+  // Ignore parentheses/extra spaces/case when matching bracket text to a known category,
+  // e.g. "[Эпики поезда BAU]" and "[Эпики поезда (BAU)]" should both match.
+  const normalize = (s) => s.toLowerCase().replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+  const normalizedCategories = ALLOCATION_CATEGORIES.map((c) => ({ cat: c, norm: normalize(c) }));
+
+  const unmatchedLabels = new Set();
   const linkedStoryIds = new Set();
   for (const [featureId, storyIds] of featureToStories.entries()) {
     storyIds.forEach((id) => linkedStoryIds.add(id));
@@ -126,9 +132,14 @@ async function computeAllocation() {
     const m = BRACKET_RE.exec(title);
     let category = 'Не указано';
     if (m) {
-      const bracketText = m[1].trim().toLowerCase();
-      const matched = ALLOCATION_CATEGORIES.find((c) => c.toLowerCase() === bracketText);
-      if (matched) category = matched;
+      const bracketText = m[1].trim();
+      const normBracket = normalize(bracketText);
+      const found = normalizedCategories.find((c) => c.norm === normBracket);
+      if (found) {
+        category = found.cat;
+      } else {
+        unmatchedLabels.add(bracketText);
+      }
     }
     const spSum = storyIds.reduce((s, id) => s + (pointsByCard.get(id) || 0), 0);
     categoryTotals[category] += spSum;
@@ -143,19 +154,27 @@ async function computeAllocation() {
   }
 
   const total = Object.values(categoryTotals).reduce((a, b) => a + b, 0);
-  return ALLOCATION_CATEGORIES.map((cat) => {
+  const results = ALLOCATION_CATEGORIES.map((cat) => {
     const sp = categoryTotals[cat];
     const pct = total > 0 ? Math.round((sp / total) * 100) : 0;
     return { category: cat, sp, pct };
   });
+  return { results, unmatched: [...unmatchedLabels] };
 }
 
-function formatAllocationContent(results) {
+function formatAllocationContent(data) {
+  const { results, unmatched } = data;
   const lines = ['<p><strong>Аллокация ёмкости</strong></p>'];
   for (const r of results) {
     const low = r.category === REGULATORY_CATEGORY && r.pct < LOW_REGULATORY_THRESHOLD;
     const line = `${r.category}: ${r.sp} SP (${r.pct}%)`;
     lines.push(low ? `<p><span style="color:#df0b0b">${line}</span></p>` : `<p>${line}</p>`);
+  }
+  if (unmatched && unmatched.length) {
+    const labels = unmatched.map((u) => `"${u}"`).join(', ');
+    lines.push(
+      `<p><span style="font-size:11px;color:#df0b0b">Не распознано (попало в "Не указано"): ${labels} — проверьте написание категории у фичи.</span></p>`
+    );
   }
   const now = new Date();
   const stamp = now.toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
