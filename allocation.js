@@ -162,14 +162,20 @@ async function computeAllocation() {
   return { results, unmatched: [...unmatchedLabels] };
 }
 
+const DIVIDER = '───────────────────';
+
 function formatAllocationContent(data) {
   const { results, unmatched } = data;
-  const lines = ['<p><strong>Аллокация ёмкости</strong></p>'];
+  const lines = [
+    `<p><span style="font-size:18px">📊 <strong>Аллокация ёмкости</strong></span></p>`,
+    `<p><span style="color:#999999">${DIVIDER}</span></p>`,
+  ];
   for (const r of results) {
     const low = r.category === REGULATORY_CATEGORY && r.pct < LOW_REGULATORY_THRESHOLD;
-    const line = `${r.category}: ${r.sp} SP (${r.pct}%)`;
+    const line = `${low ? '⚠ ' : '• '}${r.category} — <strong>${r.sp} SP</strong> · ${r.pct}%`;
     lines.push(low ? `<p><span style="color:#df0b0b">${line}</span></p>` : `<p>${line}</p>`);
   }
+  lines.push(`<p><span style="color:#999999">${DIVIDER}</span></p>`);
   if (unmatched && unmatched.length) {
     const labels = unmatched.map((u) => `"${u}"`).join(', ');
     lines.push(
