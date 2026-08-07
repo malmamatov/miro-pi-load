@@ -85,6 +85,7 @@ async function computeAllocation() {
   const pointsByCard = await getPointsByCard(cards);
 
   const connectors = await miro.board.get({ type: 'connector' });
+  console.log('[PI Load debug] cards fetched:', cards.length, 'connectors fetched:', connectors.length);
   const cardById = new Map(cards.map((c) => [c.id, c]));
 
   const featureToStories = new Map();
@@ -109,11 +110,16 @@ async function computeAllocation() {
       featureId = endId;
       storyId = startId;
     } else {
+      console.log('[PI Load debug] SKIPPED connector', startId, '(zone:', startZone, ') ->', endId, '(zone:', endZone, ')');
       continue;
     }
     if (!featureToStories.has(featureId)) featureToStories.set(featureId, []);
     featureToStories.get(featureId).push(storyId);
   }
+  console.log(
+    '[PI Load debug] featureToStories:',
+    [...featureToStories.entries()].map(([f, s]) => `${f} -> [${s.join(', ')}]`)
+  );
 
   const categoryTotals = {};
   for (const cat of ALLOCATION_CATEGORIES) categoryTotals[cat] = 0;
