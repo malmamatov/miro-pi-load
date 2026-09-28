@@ -85,35 +85,48 @@ async function computeAllocation() {
   const cards = await miro.board.get({ type: 'card' });
   const pointsByCard = await getPointsByCard(cards);
 
-  const connectors = await miro.board.get({ type: 'connector' });
+  let connectors = [];
+  try {
+    connectors = await miro.board.get({ type: 'connector' });
+  } catch (e) {
+    connectors = [];
+  }
   const cardById = new Map(cards.map((c) => [c.id, c]));
 
   const featureToStories = new Map();
+  const brokenConnectors = [];
   for (const conn of connectors) {
-    const startId = conn.start && conn.start.item;
-    const endId = conn.end && conn.end.item;
-    if (!startId || !endId) continue;
-    const startCard = cardById.get(startId);
-    const endCard = cardById.get(endId);
+    // A connector pointing at a deleted item can throw when Miro's internal
+    // engine touches it (e.g. "LineCoreComponent is required for destroyed
+    // object 'line'") — skip that one connector instead of failing the whole calc.
+    try {
+      const startId = conn.start && conn.start.item;
+      const endId = conn.end && conn.end.item;
+      if (!startId || !endId) continue;
+      const startCard = cardById.get(startId);
+      const endCard = cardById.get(endId);
 
-    const startZone =
-      (startCard && colorZone(startCard.style && startCard.style.cardTheme)) || zone(startCard && startCard.y);
-    const endZone =
-      (endCard && colorZone(endCard.style && endCard.style.cardTheme)) || zone(endCard && endCard.y);
+      const startZone =
+        (startCard && colorZone(startCard.style && startCard.style.cardTheme)) || zone(startCard && startCard.y);
+      const endZone =
+        (endCard && colorZone(endCard.style && endCard.style.cardTheme)) || zone(endCard && endCard.y);
 
-    let featureId = null;
-    let storyId = null;
-    if (startZone === 'feature' && endZone === 'story') {
-      featureId = startId;
-      storyId = endId;
-    } else if (startZone === 'story' && endZone === 'feature') {
-      featureId = endId;
-      storyId = startId;
-    } else {
-      continue;
+      let featureId = null;
+      let storyId = null;
+      if (startZone === 'feature' && endZone === 'story') {
+        featureId = startId;
+        storyId = endId;
+      } else if (startZone === 'story' && endZone === 'feature') {
+        featureId = endId;
+        storyId = startId;
+      } else {
+        continue;
+      }
+      if (!featureToStories.has(featureId)) featureToStories.set(featureId, []);
+      featureToStories.get(featureId).push(storyId);
+    } catch (e) {
+      brokenConnectors.push(conn.id || '(unknown id)');
     }
-    if (!featureToStories.has(featureId)) featureToStories.set(featureId, []);
-    featureToStories.get(featureId).push(storyId);
   }
 
   const categoryTotals = {};
@@ -160,13 +173,13 @@ async function computeAllocation() {
     const pct = total > 0 ? Math.round((sp / total) * 100) : 0;
     return { category: cat, sp, pct };
   });
-  return { results, unmatched: [...unmatchedLabels] };
+  return { results, unmatched: [...unmatchedLabels], brokenConnectors };
 }
 
 const DIVIDER = '───────────────────';
 
 function formatAllocationContent(data) {
-  const { results, unmatched } = data;
+  const { results, unmatched, brokenConnectors } = data;
   const lines = [
     `<p><span style="font-size:18px">📊 <strong>Аллокация ёмкости</strong></span></p>`,
     `<p><span style="color:#999999">${DIVIDER}</span></p>`,
@@ -181,6 +194,11 @@ function formatAllocationContent(data) {
     const labels = unmatched.map((u) => `"${u}"`).join(', ');
     lines.push(
       `<p><span style="font-size:11px;color:#df0b0b">Не распознано (попало в "Не указано"): ${labels} — проверьте написание категории у фичи.</span></p>`
+    );
+  }
+  if (brokenConnectors && brokenConnectors.length) {
+    lines.push(
+      `<p><span style="font-size:11px;color:#df0b0b">Пропущено связей (повреждены на доске): ${brokenConnectors.length} — удалите и перерисуйте эти линии между фичей и историей.</span></p>`
     );
   }
   const now = new Date();
