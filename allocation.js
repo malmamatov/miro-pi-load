@@ -31,6 +31,81 @@ function rowYRange(shapes, minH, maxH) {
   return [yMin, yMax];
 }
 
+// The Web SDK reports "no parent" as the literal string 'null' (not JS null/undefined).
+function realParentId(item) {
+  const p = item && item.parentId;
+  return p && p !== 'null' ? p : null;
+}
+
+// Boards can hold more than one frame (a reference/calendar block alongside the real
+// PI-planning grid, loose decorative text with no frame at all, or several teams' frames on
+// one board). Anchor everything to whichever frame has the MOST "Итерация ..." headers — the
+// real column headers always come as a full set, so they outnumber any stray one-off mention
+// elsewhere. Items with no parent are ignored, not treated as a frame.
+function findFrameId(texts) {
+  const counts = new Map();
+  for (const t of texts) {
+    if (!stripHtml(t.content).startsWith('Итерация')) continue;
+    const pid = realParentId(t);
+    if (!pid) continue;
+    counts.set(pid, (counts.get(pid) || 0) + 1);
+  }
+  let best = null;
+  let bestCount = 0;
+  for (const [pid, count] of counts.entries()) {
+    if (count > bestCount) {
+      best = pid;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+function filterToFrame(items, frameId) {
+  if (!frameId) return items;
+  return items.filter((it) => realParentId(it) === frameId);
+}
+
+// Feature/Story row boundary anchored on the "Feature"/"Story" row-label shapes (stable across
+// teams' boards, unlike exact cell pixel heights or card colors, which teams sometimes
+// customize, breaking a height/color-based heuristic). The label Y is roughly each row's
+// vertical center, not the seam between rows, and the two rows aren't the same height — so the
+// naive midpoint between the two labels lands inside the (tall) Story row. When actual cards are
+// available, the real seam is found as the largest gap between consecutive card Y positions in
+// the Feature-to-Story span, which reliably falls between the two rows regardless of their
+// relative heights or exact colors used.
+function featureStoryRanges(shapes, cards) {
+  const labelY = (text) => {
+    const matches = shapes.filter((s) => stripHtml(s.content) === text).map((s) => s.y);
+    return matches.length ? matches.reduce((a, b) => a + b, 0) / matches.length : null;
+  };
+  const featureY = labelY('Feature');
+  const storyY = labelY('Story');
+  if (featureY === null || storyY === null) return [null, null];
+
+  let mid = (featureY + storyY) / 2;
+  if (cards && cards.length) {
+    const span = storyY - featureY;
+    const ys = cards
+      .map((c) => c.y)
+      .filter((y) => y >= featureY - span / 2 && y <= storyY + span)
+      .sort((a, b) => a - b);
+    let bestGap = -1;
+    let bestMid = mid;
+    for (let i = 0; i < ys.length - 1; i++) {
+      const gapMid = (ys[i] + ys[i + 1]) / 2;
+      if (gapMid < featureY || gapMid > storyY) continue;
+      const gap = ys[i + 1] - ys[i];
+      if (gap > bestGap) {
+        bestGap = gap;
+        bestMid = gapMid;
+      }
+    }
+    if (bestGap >= 0) mid = bestMid;
+  }
+  return [[-Infinity, mid], [mid, Infinity]];
+}
+
 const _tagValueCache = new Map();
 async function numericTagValue(tagId) {
   if (_tagValueCache.has(tagId)) return _tagValueCache.get(tagId);
@@ -75,14 +150,23 @@ function colorZone(color) {
 }
 
 async function computeAllocation() {
-  const shapes = await miro.board.get({ type: 'shape' });
-  const featureRange = rowYRange(shapes, 850, 950);
-  const storyRange = rowYRange(shapes, 1500, 3000);
+  const shapesAll = await miro.board.get({ type: 'shape' });
+  const textsAll = await miro.board.get({ type: 'text' });
+  const cardsAll = await miro.board.get({ type: 'card' });
+
+  const frameId = findFrameId(textsAll);
+  const shapes = filterToFrame(shapesAll, frameId);
+  const cards = filterToFrame(cardsAll, frameId);
+
+  let [featureRange, storyRange] = featureStoryRanges(shapes, cards);
+  if (!featureRange || !storyRange) {
+    featureRange = rowYRange(shapes, 850, 950);
+    storyRange = rowYRange(shapes, 1500, 3000);
+  }
   if (!featureRange || !storyRange) throw new Error('Не найдены строки "Feature"/"Story" на доске');
 
   const zone = (y) => zoneOf(featureRange, storyRange, y);
 
-  const cards = await miro.board.get({ type: 'card' });
   const pointsByCard = await getPointsByCard(cards);
 
   let connectors = [];
@@ -91,6 +175,8 @@ async function computeAllocation() {
   } catch (e) {
     connectors = [];
   }
+  // cardById is already scoped to this frame's cards, so a connector pointing outside it
+  // (a different frame, or a non-card item) is naturally excluded below.
   const cardById = new Map(cards.map((c) => [c.id, c]));
 
   const featureToStories = new Map();
@@ -107,9 +193,9 @@ async function computeAllocation() {
       const endCard = cardById.get(endId);
 
       const startZone =
-        (startCard && colorZone(startCard.style && startCard.style.cardTheme)) || zone(startCard && startCard.y);
+        zone(startCard && startCard.y) || (startCard && colorZone(startCard.style && startCard.style.cardTheme));
       const endZone =
-        (endCard && colorZone(endCard.style && endCard.style.cardTheme)) || zone(endCard && endCard.y);
+        zone(endCard && endCard.y) || (endCard && colorZone(endCard.style && endCard.style.cardTheme));
 
       let featureId = null;
       let storyId = null;
@@ -163,7 +249,7 @@ async function computeAllocation() {
     if (linkedStoryIds.has(card.id)) continue;
     const sp = pointsByCard.get(card.id);
     if (!sp) continue;
-    const cardZone = colorZone(card.style && card.style.cardTheme) || zone(card.y);
+    const cardZone = zone(card.y) || colorZone(card.style && card.style.cardTheme);
     if (cardZone === 'story') categoryTotals['Не указано'] += sp;
   }
 

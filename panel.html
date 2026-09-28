@@ -65,8 +65,13 @@ async function recalcLoad() {
   statusEl.textContent = 'Считаю...';
   statusEl.className = 'status';
   try {
-    const shapes = await miro.board.get({ type: 'shape' });
-    const texts = await miro.board.get({ type: 'text' });
+    const shapesAll = await miro.board.get({ type: 'shape' });
+    const textsAll = await miro.board.get({ type: 'text' });
+
+    const frameId = findFrameId(textsAll);
+    const shapes = filterToFrame(shapesAll, frameId);
+    const texts = filterToFrame(textsAll, frameId);
+
     const all = [...shapes, ...texts].map((it) => ({
       ref: it,
       x: it.x,
@@ -103,12 +108,15 @@ async function recalcLoad() {
       return cands.reduce((best, c) => (Math.abs(c.y - targetY) < Math.abs(best.y - targetY) ? c : best));
     };
 
-    const storyRange = rowYRange(shapes, 1500, 3000);
+    const cardsAll = await miro.board.get({ type: 'card' });
+    const cards = filterToFrame(cardsAll, frameId);
+
+    let [, storyRange] = featureStoryRanges(shapes, cards);
+    if (!storyRange) storyRange = rowYRange(shapes, 1500, 3000);
     if (!storyRange) throw new Error('Не найдена строка "Story" на доске');
     const [storyYMin, storyYMax] = storyRange;
 
     // Story points come from numeric tags on cards (same source as the allocation calc)
-    const cards = await miro.board.get({ type: 'card' });
     const pointsByCard = await getPointsByCard(cards);
     const markers = cards
       .filter((c) => pointsByCard.has(c.id) && c.y >= storyYMin && c.y <= storyYMax)
