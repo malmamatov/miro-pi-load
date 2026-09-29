@@ -74,7 +74,18 @@ function filterToFrame(items, frameId) {
 // available, the real seam is found as the largest gap between consecutive card Y positions in
 // the Feature-to-Story span, which reliably falls between the two rows regardless of their
 // relative heights or exact colors used.
-function featureStoryRanges(shapes, cards) {
+// Boards often carry a legend/reference panel (card-type swatches, etc.) to the side of the
+// actual iteration grid, reusing the same Feature/Story colors and sometimes the same Y range —
+// which corrupts both color- and gap-based row detection. The legend sits well outside the
+// grid's own horizontal span, so restricting candidate cards to that span filters it out.
+function gridXBounds(headerXs) {
+  if (headerXs.length < 2) return [-Infinity, Infinity];
+  const xs = [...headerXs].sort((a, b) => a - b);
+  const spacing = (xs[xs.length - 1] - xs[0]) / (xs.length - 1);
+  return [xs[0] - spacing / 2, xs[xs.length - 1] + spacing / 2];
+}
+
+function featureStoryRanges(shapes, cards, gridXB) {
   const labelY = (text) => {
     const matches = shapes.filter((s) => stripHtml(s.content) === text).map((s) => s.y);
     return matches.length ? matches.reduce((a, b) => a + b, 0) / matches.length : null;
@@ -86,7 +97,8 @@ function featureStoryRanges(shapes, cards) {
   let mid = (featureY + storyY) / 2;
   if (cards && cards.length) {
     const span = storyY - featureY;
-    const ys = cards
+    const inGrid = gridXB ? cards.filter((c) => c.x >= gridXB[0] && c.x <= gridXB[1]) : cards;
+    const ys = inGrid
       .map((c) => c.y)
       .filter((y) => y >= featureY - span / 2 && y <= storyY + span)
       .sort((a, b) => a - b);
@@ -156,9 +168,13 @@ async function computeAllocation() {
 
   const frameId = findFrameId(textsAll);
   const shapes = filterToFrame(shapesAll, frameId);
+  const texts = filterToFrame(textsAll, frameId);
   const cards = filterToFrame(cardsAll, frameId);
 
-  let [featureRange, storyRange] = featureStoryRanges(shapes, cards);
+  const iterHeaderXs = texts.filter((t) => stripHtml(t.content).startsWith('Итерация')).map((t) => t.x);
+  const gridXB = gridXBounds(iterHeaderXs);
+
+  let [featureRange, storyRange] = featureStoryRanges(shapes, cards, gridXB);
   if (!featureRange || !storyRange) {
     featureRange = rowYRange(shapes, 850, 950);
     storyRange = rowYRange(shapes, 1500, 3000);

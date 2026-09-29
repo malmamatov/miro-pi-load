@@ -111,7 +111,7 @@ async function recalcLoad() {
     const cardsAll = await miro.board.get({ type: 'card' });
     const cards = filterToFrame(cardsAll, frameId);
 
-    let [, storyRange] = featureStoryRanges(shapes, cards);
+    let [, storyRange] = featureStoryRanges(shapes, cards, gridXBounds(centers));
     if (!storyRange) storyRange = rowYRange(shapes, 1500, 3000);
     if (!storyRange) throw new Error('Не найдена строка "Story" на доске');
     const [storyYMin, storyYMax] = storyRange;
