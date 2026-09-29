@@ -98,13 +98,12 @@ function featureStoryRanges(shapes, cards, gridXB) {
   if (cards && cards.length) {
     const inGrid = gridXB ? cards.filter((c) => c.x >= gridXB[0] && c.x <= gridXB[1]) : cards;
 
-    // Colors first: when this team actually uses the standard Feature/Story theme and the two
-    // colors' Y-ranges don't overlap, the midpoint between them IS the seam — directly observed,
-    // no guessing. Only fall back to the (noisier) gap method when color doesn't resolve it.
-    const featureColoredYs = inGrid.filter((c) => c.style && c.style.cardTheme === FEATURE_COLOR).map((c) => c.y);
-    const storyColoredYs = inGrid.filter((c) => c.style && c.style.cardTheme === STORY_COLOR).map((c) => c.y);
-    if (featureColoredYs.length && storyColoredYs.length && Math.max(...featureColoredYs) < Math.min(...storyColoredYs)) {
-      const colorMid = (Math.max(...featureColoredYs) + Math.min(...storyColoredYs)) / 2;
+    // Both colors: when this team uses the standard Feature AND Story theme and the two colors'
+    // Y-ranges don't overlap, the midpoint between them IS the seam — directly observed.
+    const featureColoredYs = inGrid.filter((c) => c.style && c.style.cardTheme === FEATURE_COLOR).map((c) => c.y).sort((a, b) => a - b);
+    const storyColoredYs = inGrid.filter((c) => c.style && c.style.cardTheme === STORY_COLOR).map((c) => c.y).sort((a, b) => a - b);
+    if (featureColoredYs.length && storyColoredYs.length && featureColoredYs[featureColoredYs.length - 1] < storyColoredYs[0]) {
+      const colorMid = (featureColoredYs[featureColoredYs.length - 1] + storyColoredYs[0]) / 2;
       return [[-Infinity, colorMid], [colorMid, Infinity]];
     }
 
@@ -113,6 +112,21 @@ function featureStoryRanges(shapes, cards, gridXB) {
       .map((c) => c.y)
       .filter((y) => y >= featureY - span / 2 && y <= storyY + span)
       .sort((a, b) => a - b);
+
+    // One color: a team may keep the standard Feature blue but pick their own Story color (or
+    // vice versa). Whichever standard color IS present anchors a hard boundary at the edge of
+    // that known cluster — still directly observed, just for one side.
+    if (featureColoredYs.length) {
+      const cutoff = featureColoredYs[featureColoredYs.length - 1];
+      const after = ys.find((y) => y > cutoff);
+      if (after !== undefined) return [[-Infinity, (cutoff + after) / 2], [(cutoff + after) / 2, Infinity]];
+    }
+    if (storyColoredYs.length) {
+      const cutoff = storyColoredYs[0];
+      const before = [...ys].reverse().find((y) => y < cutoff);
+      if (before !== undefined) return [[-Infinity, (before + cutoff) / 2], [(before + cutoff) / 2, Infinity]];
+    }
+
     let bestGap = -1;
     let bestMid = mid;
     for (let i = 0; i < ys.length - 1; i++) {
