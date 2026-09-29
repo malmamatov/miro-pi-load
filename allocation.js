@@ -96,8 +96,19 @@ function featureStoryRanges(shapes, cards, gridXB) {
 
   let mid = (featureY + storyY) / 2;
   if (cards && cards.length) {
-    const span = storyY - featureY;
     const inGrid = gridXB ? cards.filter((c) => c.x >= gridXB[0] && c.x <= gridXB[1]) : cards;
+
+    // Colors first: when this team actually uses the standard Feature/Story theme and the two
+    // colors' Y-ranges don't overlap, the midpoint between them IS the seam — directly observed,
+    // no guessing. Only fall back to the (noisier) gap method when color doesn't resolve it.
+    const featureColoredYs = inGrid.filter((c) => c.style && c.style.cardTheme === FEATURE_COLOR).map((c) => c.y);
+    const storyColoredYs = inGrid.filter((c) => c.style && c.style.cardTheme === STORY_COLOR).map((c) => c.y);
+    if (featureColoredYs.length && storyColoredYs.length && Math.max(...featureColoredYs) < Math.min(...storyColoredYs)) {
+      const colorMid = (Math.max(...featureColoredYs) + Math.min(...storyColoredYs)) / 2;
+      return [[-Infinity, colorMid], [colorMid, Infinity]];
+    }
+
+    const span = storyY - featureY;
     const ys = inGrid
       .map((c) => c.y)
       .filter((y) => y >= featureY - span / 2 && y <= storyY + span)
