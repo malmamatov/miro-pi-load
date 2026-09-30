@@ -15,6 +15,23 @@ const STORY_COLOR = '#8fd14f';
 const PLACEHOLDER_COLOR = '#c9b3f0';
 const BRACKET_RE = /\[(.*?)\]/;
 
+// Miro's internal engine can occasionally throw on ANY board.get() call — even for a type that
+// has nothing to do with connectors — when some unrelated connector on the board points at a
+// deleted item (e.g. "LineCoreComponent is required for destroyed object 'line'"). It's a
+// transient internal-state glitch, not a real absence of data, so one retry usually clears it.
+async function safeBoardGet(query) {
+  try {
+    return await miro.board.get(query);
+  } catch (e) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    try {
+      return await miro.board.get(query);
+    } catch (e2) {
+      return [];
+    }
+  }
+}
+
 function stripHtml(s) {
   const div = document.createElement('div');
   div.innerHTML = s || '';
@@ -187,9 +204,9 @@ function colorZone(color) {
 }
 
 async function computeAllocation() {
-  const shapesAll = await miro.board.get({ type: 'shape' });
-  const textsAll = await miro.board.get({ type: 'text' });
-  const cardsAll = await miro.board.get({ type: 'card' });
+  const shapesAll = await safeBoardGet({ type: 'shape' });
+  const textsAll = await safeBoardGet({ type: 'text' });
+  const cardsAll = await safeBoardGet({ type: 'card' });
 
   const frameId = findFrameId(textsAll);
   const shapes = filterToFrame(shapesAll, frameId);

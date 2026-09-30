@@ -65,8 +65,8 @@ async function recalcLoad() {
   statusEl.textContent = 'Считаю...';
   statusEl.className = 'status';
   try {
-    const shapesAll = await miro.board.get({ type: 'shape' });
-    const textsAll = await miro.board.get({ type: 'text' });
+    const shapesAll = await safeBoardGet({ type: 'shape' });
+    const textsAll = await safeBoardGet({ type: 'text' });
 
     const frameId = findFrameId(textsAll);
     const shapes = filterToFrame(shapesAll, frameId);
@@ -112,7 +112,7 @@ async function recalcLoad() {
       return cands.reduce((best, c) => (Math.abs(c.y - targetY) < Math.abs(best.y - targetY) ? c : best));
     };
 
-    const cardsAll = await miro.board.get({ type: 'card' });
+    const cardsAll = await safeBoardGet({ type: 'card' });
     const cards = filterToFrame(cardsAll, frameId);
 
     let [, storyRange] = featureStoryRanges(shapes, cards, gridXBounds(centers));
@@ -140,12 +140,21 @@ async function recalcLoad() {
       results.push({ label: iterHeaders[i].content, total, capValue, overloaded, loadCircle });
     }
 
+    const failedWrites = [];
     for (const r of results) {
       if (!r.loadCircle) continue;
       const shapeItem = r.loadCircle.ref;
       shapeItem.content = `<p>${r.total}</p>`;
       shapeItem.style.fillColor = r.overloaded ? '#df0b0b' : '#00a656';
-      await shapeItem.sync();
+      // A shape can reference a connector that was deleted elsewhere on the board
+      // (connectorIds), and Miro's internal engine can throw when touching it during sync
+      // (e.g. "LineCoreComponent is required for destroyed object 'line'") — don't let one
+      // broken circle's write abort the whole recalculation.
+      try {
+        await shapeItem.sync();
+      } catch (e) {
+        failedWrites.push(r.label);
+      }
     }
 
     const tbody = tableEl.querySelector('tbody');
@@ -158,7 +167,9 @@ async function recalcLoad() {
       tbody.appendChild(tr);
     }
     tableEl.style.display = '';
-    statusEl.textContent = 'Готово. Доска обновлена.';
+    statusEl.textContent = failedWrites.length
+      ? `Готово, но не удалось записать: ${failedWrites.join(', ')} (повреждённая связь на доске — попробуйте ещё раз).`
+      : 'Готово. Доска обновлена.';
   } catch (e) {
     statusEl.textContent = 'Ошибка: ' + e.message;
     statusEl.className = 'error';
