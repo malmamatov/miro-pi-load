@@ -131,25 +131,24 @@ function featureStoryRanges(shapes, cards, gridXB) {
       .filter((c) => c.style && c.style.cardTheme === STORY_COLOR && !belongsToFeature(c.y))
       .map((c) => c.y)
       .sort((a, b) => a - b);
-    if (featureColoredYs.length && storyColoredYs.length && featureColoredYs[featureColoredYs.length - 1] < storyColoredYs[0]) {
-      const colorMid = (featureColoredYs[featureColoredYs.length - 1] + storyColoredYs[0]) / 2;
-      return [[-Infinity, colorMid], [colorMid, Infinity]];
-    }
-
     const span = storyY - featureY;
     const ys = inGrid
       .map((c) => c.y)
       .filter((y) => y >= featureY - span / 2 && y <= storyY + span)
       .sort((a, b) => a - b);
 
-    // One color: a team may keep the standard Feature blue but pick their own Story color (or
-    // vice versa). Whichever standard color IS present anchors a hard boundary at the edge of
-    // that known cluster — still directly observed, just for one side.
+    // Feature-color anchor: if this team uses the standard Feature color at all, trust it and
+    // ONLY it — the boundary is the midpoint between its highest card and the very next card
+    // after it. This does NOT require Story to be any particular color: teams often sub-color
+    // Story cards by discipline (backend/frontend/QA/...), so anchoring on Story's lowest card
+    // of ONE specific color can land the boundary below other-colored Story cards sitting
+    // higher up, wrongly excluding them. Feature stays a single color much more consistently.
     if (featureColoredYs.length) {
       const cutoff = featureColoredYs[featureColoredYs.length - 1];
       const after = ys.find((y) => y > cutoff);
       if (after !== undefined) return [[-Infinity, (cutoff + after) / 2], [(cutoff + after) / 2, Infinity]];
     }
+    // Story-color anchor: only used when no Feature-colored card exists at all.
     if (storyColoredYs.length) {
       const cutoff = storyColoredYs[0];
       const before = [...ys].reverse().find((y) => y < cutoff);
