@@ -115,10 +115,22 @@ function featureStoryRanges(shapes, cards, gridXB) {
   if (cards && cards.length) {
     const inGrid = gridXB ? cards.filter((c) => c.x >= gridXB[0] && c.x <= gridXB[1]) : cards;
 
+    // An occasional card keeps the "wrong" theme color for its actual row (a facilitator's slip,
+    // or a color reused for something else) — one such outlier deep in the other row would
+    // otherwise anchor the whole boundary there. Only trust a color-coded card as evidence for a
+    // row if it also sits closer to that row's own label than to the other one.
+    const belongsToFeature = (y) => Math.abs(y - featureY) < Math.abs(y - storyY);
+
     // Both colors: when this team uses the standard Feature AND Story theme and the two colors'
     // Y-ranges don't overlap, the midpoint between them IS the seam — directly observed.
-    const featureColoredYs = inGrid.filter((c) => c.style && c.style.cardTheme === FEATURE_COLOR).map((c) => c.y).sort((a, b) => a - b);
-    const storyColoredYs = inGrid.filter((c) => c.style && c.style.cardTheme === STORY_COLOR).map((c) => c.y).sort((a, b) => a - b);
+    const featureColoredYs = inGrid
+      .filter((c) => c.style && c.style.cardTheme === FEATURE_COLOR && belongsToFeature(c.y))
+      .map((c) => c.y)
+      .sort((a, b) => a - b);
+    const storyColoredYs = inGrid
+      .filter((c) => c.style && c.style.cardTheme === STORY_COLOR && !belongsToFeature(c.y))
+      .map((c) => c.y)
+      .sort((a, b) => a - b);
     if (featureColoredYs.length && storyColoredYs.length && featureColoredYs[featureColoredYs.length - 1] < storyColoredYs[0]) {
       const colorMid = (featureColoredYs[featureColoredYs.length - 1] + storyColoredYs[0]) / 2;
       return [[-Infinity, colorMid], [colorMid, Infinity]];
