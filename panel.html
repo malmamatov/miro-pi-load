@@ -88,9 +88,13 @@ async function recalcLoad() {
     if (!iterHeaders.length) throw new Error('Не найдены заголовки итераций на доске');
 
     const centers = iterHeaders.map((it) => it.x);
+    const [gridLeft, gridRight] = gridXBounds(centers);
+    // The first/last column's outer edge is the grid's own boundary, not -/+infinity —
+    // otherwise a legend to the left, or a trailing PI-summary column to the right, leaks
+    // its own tagged cards into the nearest real iteration.
     const bounds = centers.map((c, i) => [
-      i === 0 ? -Infinity : (centers[i - 1] + c) / 2,
-      i === centers.length - 1 ? Infinity : (c + centers[i + 1]) / 2,
+      i === 0 ? gridLeft : (centers[i - 1] + c) / 2,
+      i === centers.length - 1 ? gridRight : (c + centers[i + 1]) / 2,
     ]);
 
     const labelY = (text) => {
