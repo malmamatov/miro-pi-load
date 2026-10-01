@@ -232,7 +232,13 @@ async function computeAllocation() {
     featureRange = rowYRange(shapes, 850, 950);
     storyRange = rowYRange(shapes, 1500, 3000);
   }
-  if (!featureRange || !storyRange) throw new Error('Не найдены строки "Feature"/"Story" на доске');
+  if (!featureRange || !storyRange) {
+    const featureLabelCount = shapes.filter((s) => stripHtml(s.content) === 'Feature').length;
+    const storyLabelCount = shapes.filter((s) => stripHtml(s.content) === 'Story').length;
+    throw new Error(
+      `Не найдены строки "Feature"/"Story" на доске [диагностика: shapesAll=${shapesAll.length}, textsAll=${textsAll.length}, cardsAll=${cardsAll.length}, frameId=${frameId || 'нет'}, shapes(в фрейме)=${shapes.length}, cards(в фрейме)=${cards.length}, меток Feature=${featureLabelCount}, меток Story=${storyLabelCount}]`
+    );
+  }
 
   const zone = (y) => zoneOf(featureRange, storyRange, y);
 

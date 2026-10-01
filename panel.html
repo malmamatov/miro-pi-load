@@ -85,7 +85,14 @@ async function recalcLoad() {
     const iterHeaders = all
       .filter((it) => it.type === 'text' && it.content.startsWith('Итерация'))
       .sort((a, b) => a.x - b.x);
-    if (!iterHeaders.length) throw new Error('Не найдены заголовки итераций на доске');
+    if (!iterHeaders.length) {
+      throw new Error(
+        `Не найдены заголовки итераций на доске [диагностика: textsAll=${textsAll.length}, frameId=${frameId || 'нет'}, texts(в фрейме)=${texts.length}, образцы текста: ${textsAll
+          .slice(0, 5)
+          .map((t) => JSON.stringify(stripHtml(t.content)))
+          .join(', ')}]`
+      );
+    }
 
     const centers = iterHeaders.map((it) => it.x);
     const [gridLeft, gridRight] = gridXBounds(centers);
